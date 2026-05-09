@@ -173,14 +173,6 @@ button {
   margin-bottom: 18px;
 }
 
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 .topbar h2 {
   font-size: clamp(1.4rem, 2.2vw, 2.2rem);
   line-height: 1.05;
@@ -226,14 +218,13 @@ button {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
 
 .metric,
 .quiet-box,
-.bank-upload-card,
 .export-card,
 .issue,
 .question,
@@ -316,33 +307,10 @@ button {
   font-weight: 700;
 }
 
-.demo-callout {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px;
-  border: 1px solid #cfe1dc;
-  border-radius: 8px;
-  background: #f2faf7;
-}
-
-.demo-callout p {
-  margin: 4px 0 0;
-  color: #61727f;
-  font-size: 0.9rem;
-}
-
 .alert.danger {
   border: 1px solid #efb4a9;
   background: #fff0ed;
   color: #9e2f20;
-}
-
-.alert.warning {
-  border: 1px solid #f1d28a;
-  background: #fff8e6;
-  color: #755410;
 }
 
 .split,
@@ -354,37 +322,16 @@ button {
 }
 
 .quiet-box,
-.bank-upload-card,
 .export-card,
 .template-band > div {
   padding: 16px;
 }
 
 .quiet-box strong,
-.bank-upload-card strong,
 .export-card strong,
 .template-band strong {
   display: block;
   margin-bottom: 6px;
-}
-
-.bank-upload-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.bank-upload-card {
-  display: grid;
-  align-content: space-between;
-  gap: 16px;
-  min-height: 180px;
-}
-
-.bank-upload-card p {
-  margin: 0;
-  color: #61727f;
-  font-size: 0.9rem;
 }
 
 .template-band {
@@ -644,8 +591,6 @@ td span {
   }
 
   .topbar,
-  .topbar-actions,
-  .demo-callout,
   .toolbar,
   .section-head {
     align-items: stretch;
@@ -657,7 +602,6 @@ td span {
   .form-grid,
   .split,
   .center-grid,
-  .bank-upload-grid,
   .export-grid,
   .template-band,
   .question,

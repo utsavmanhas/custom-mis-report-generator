@@ -1,7 +1,7 @@
 import { categorySignedAmount } from "./classification";
 import { generateCustomMisWorkbook } from "./customReport";
 import { generateUniversityMisWorkbook } from "./universityReport";
-import type { AccountCategory, BankTransaction, BusinessProfile, GeneratedQuestion, ProfitCenter, QuestionAnswer, StaffMember, TrialBalanceRow, WorkbookIssue } from "../types";
+import type { AccountCategory, BusinessProfile, GeneratedQuestion, ProfitCenter, QuestionAnswer, StaffMember, TrialBalanceRow, WorkbookIssue } from "../types";
 
 function amountForCategory(row: TrialBalanceRow, category: AccountCategory) {
   return row.category === category ? Math.abs(categorySignedAmount(row)) : 0;
@@ -17,7 +17,6 @@ export function buildWorkbookIssues(
   centers: ProfitCenter[],
   staff: StaffMember[],
   questions: GeneratedQuestion[],
-  bankTransactions: BankTransaction[] = [],
 ): WorkbookIssue[] {
   const issues: WorkbookIssue[] = [];
   const totalDebit = rows.reduce((sum, row) => sum + row.debit, 0);
@@ -45,30 +44,6 @@ export function buildWorkbookIssues(
     issues.push({ label: "People allocation missing", detail: "Payroll exists in the trial balance but no staff assignment data has been entered.", severity: "medium" });
   }
 
-  const hasBankStatement = bankTransactions.some((txn) => txn.sourceType === "bank-statement");
-  const hasBankLedger = bankTransactions.some((txn) => txn.sourceType === "bank-ledger");
-  if (rows.length && !bankTransactions.length) {
-    issues.push({
-      label: "Fund flow source missing",
-      detail: "Upload bank statements and bank ledgers before treating fund flow as client-ready.",
-      severity: "high",
-    });
-  }
-  if (rows.length && bankTransactions.length && !hasBankStatement) {
-    issues.push({
-      label: "Bank statement missing",
-      detail: "Bank ledger is useful for classification, but actual fund flow needs bank statement movement.",
-      severity: "high",
-    });
-  }
-  if (rows.length && bankTransactions.length && !hasBankLedger) {
-    issues.push({
-      label: "Bank ledger missing",
-      detail: "Upload bank ledgers to support classification and reconcile book movement to statement movement.",
-      severity: "medium",
-    });
-  }
-
   if (questions.some((question) => question.priority === "high")) {
     issues.push({ label: "Open critical questions", detail: `${questions.filter((question) => question.priority === "high").length} high-priority MIS questions remain open.`, severity: "medium" });
   }
@@ -83,9 +58,8 @@ export function generateMisWorkbook(params: {
   staff: StaffMember[];
   questions: GeneratedQuestion[];
   answers: QuestionAnswer[];
-  bankTransactions?: BankTransaction[];
 }) {
-  const issues = buildWorkbookIssues(params.profile, params.rows, params.centers, params.staff, params.questions, params.bankTransactions || []);
+  const issues = buildWorkbookIssues(params.profile, params.rows, params.centers, params.staff, params.questions);
 
   if (params.profile.businessType === "university") {
     return generateUniversityMisWorkbook({ ...params, issues });
