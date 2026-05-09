@@ -27,6 +27,9 @@ export type AllocationBase = "revenue" | "headcount" | "fte" | "equal" | "manual
 
 export type ProfitCenterKind = "project" | "department" | "batch" | "product" | "vertical" | "location" | "custom";
 
+export type FundFlowBasis = "bank-statement" | "bank-ledger" | "bank-statement-and-ledger" | "trial-balance" | "manual";
+export type BankSourceType = "bank-statement" | "bank-ledger";
+
 export interface BusinessProfile {
   businessName: string;
   legalEntity: string;
@@ -40,6 +43,7 @@ export interface BusinessProfile {
   publicNotes: string;
   sourceUrls: string;
   allocationBase: AllocationBase;
+  fundFlowBasis: FundFlowBasis;
 }
 
 export interface TrialBalanceRow {
@@ -47,6 +51,7 @@ export interface TrialBalanceRow {
   sourceSheet: string;
   accountName: string;
   accountGroup: string;
+  accountPath?: string[];
   debit: number;
   credit: number;
   balance: number;
@@ -56,6 +61,46 @@ export interface TrialBalanceRow {
   allocationBase: AllocationBase;
   confidence: number;
   raw: Record<string, string | number | null>;
+}
+
+export interface TrialBalanceMetadata {
+  businessName: string;
+  periodStart: string;
+  periodEnd: string;
+  sourceFileName: string;
+  sourceSheetName: string;
+  totalDebit: number;
+  totalCredit: number;
+}
+
+export interface ParsedTrialBalance {
+  rows: TrialBalanceRow[];
+  metadata: TrialBalanceMetadata;
+  warnings: string[];
+}
+
+export interface BankTransaction {
+  id: string;
+  sourceType: BankSourceType;
+  sourceFileName: string;
+  sourceSheet: string;
+  date: string;
+  narration: string;
+  debit: number;
+  credit: number;
+  amount: number;
+  balance: number;
+  bankName: string;
+  accountName: string;
+  category: string;
+  fundFlowGroup: string;
+  isInterAccountTransfer: boolean;
+  raw: Record<string, string | number | null>;
+}
+
+export interface ParsedBankStatement {
+  transactions: BankTransaction[];
+  warnings: string[];
 }
 
 export interface ProfitCenter {

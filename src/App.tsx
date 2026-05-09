@@ -9,20 +9,24 @@ import {
   Download,
   FileSpreadsheet,
   Globe2,
+  Landmark,
   Layers3,
   Plus,
+  Sparkles,
   Trash2,
   Upload,
   Users,
 } from "lucide-react";
 import { allocationLabels, businessTypeLabels, categoryLabels } from "./lib/classification";
 import { getBusinessTemplate } from "./lib/businessTemplates";
-import { parseTrialBalanceFile } from "./lib/parser";
+import { parseBankStatementWorkbook, parseTrialBalanceWorkbook } from "./lib/parser";
 import { buildQuestions } from "./lib/questions";
 import { buildWorkbookIssues, generateMisWorkbook } from "./lib/reporting";
 import type {
   AccountCategory,
   AllocationBase,
+  BankSourceType,
+  BankTransaction,
   BusinessProfile,
   BusinessType,
   ProfitCenter,
@@ -33,7 +37,7 @@ import type {
 } from "./types";
 
 const initialProfile: BusinessProfile = {
-  businessName: "Sample Business",
+  businessName: "",
   legalEntity: "",
   businessType: "consulting",
   cadence: "monthly",
@@ -45,6 +49,7 @@ const initialProfile: BusinessProfile = {
   publicNotes: "",
   sourceUrls: "",
   allocationBase: "revenue",
+  fundFlowBasis: "trial-balance",
 };
 
 const categories = Object.keys(categoryLabels) as AccountCategory[];
@@ -111,36 +116,274 @@ function isUnconfiguredCenter(center: ProfitCenter) {
   );
 }
 
+const simpleDemoCenters = [
+  {
+    id: "pc-simple-alnylam",
+    name: "ALNYLAM US",
+    segment: "Advanced analytics / research",
+    owner: "Subash Chander",
+    manualRevenue: 7134849,
+    manualDirectCost: 270376,
+    studentCount: 2613,
+    teachingStaffCount: 130,
+    allocationWeight: 8.97,
+  },
+  {
+    id: "pc-simple-jntl",
+    name: "JNTL Consumer Health",
+    segment: "Consumer health analytics",
+    owner: "Renuka Rajan",
+    manualRevenue: 21802708,
+    manualDirectCost: 826215,
+    studentCount: 7986,
+    teachingStaffCount: 399,
+    allocationWeight: 27.42,
+  },
+  {
+    id: "pc-simple-kenvue",
+    name: "Kenvue",
+    segment: "Consumer intelligence / dashboards",
+    owner: "Delivery Lead",
+    manualRevenue: 7168835,
+    manualDirectCost: 271664,
+    studentCount: 2626,
+    teachingStaffCount: 131,
+    allocationWeight: 9.02,
+  },
+  {
+    id: "pc-simple-replimune",
+    name: "Replimune",
+    segment: "Research analytics",
+    owner: "Delivery Lead",
+    manualRevenue: 18160505,
+    manualDirectCost: 688194,
+    studentCount: 6652,
+    teachingStaffCount: 333,
+    allocationWeight: 22.84,
+  },
+  {
+    id: "pc-simple-vifor",
+    name: "Vifor International",
+    segment: "Pharma / healthcare analytics",
+    owner: "Delivery Lead",
+    manualRevenue: 13116060,
+    manualDirectCost: 497034,
+    studentCount: 4804,
+    teachingStaffCount: 240,
+    allocationWeight: 16.5,
+  },
+  {
+    id: "pc-simple-xoma",
+    name: "XOMA",
+    segment: "Investment / scientific research",
+    owner: "Delivery Lead",
+    manualRevenue: 12119722,
+    manualDirectCost: 459278,
+    studentCount: 4439,
+    teachingStaffCount: 222,
+    allocationWeight: 15.24,
+  },
+];
+
+function simpleDemoNotes(name: string) {
+  return `Demo allocation for ${name} based on client debtor balance as proxy for revenue split. Replace with invoice-wise revenue, project timesheets, and direct vendor tagging for final MIS.`;
+}
+
+function createSimpleDemoProfitCenters(): ProfitCenter[] {
+  return simpleDemoCenters.map((center) => ({
+    ...createDefaultProfitCenter("professional-services"),
+    id: center.id,
+    name: center.name,
+    kind: "project",
+    owner: center.owner,
+    segment: center.segment,
+    revenueDriver: "Retainer / project-based analytics engagement",
+    manualRevenue: center.manualRevenue,
+    manualDirectCost: center.manualDirectCost,
+    priorRevenue: 0,
+    priorDirectCost: 0,
+    studentCount: center.studentCount,
+    teachingStaffCount: center.teachingStaffCount,
+    nonTeachingStaffCount: 1,
+    averageRevenueRate: 2730,
+    variableCostRate: 1331,
+    utilizationPercent: 90,
+    allocationWeight: center.allocationWeight,
+    notes: simpleDemoNotes(center.name),
+  }));
+}
+
+function createSimpleDemoStaff(): StaffMember[] {
+  const assignments = [
+    ["Senior delivery lead", "Partner / manager", 600000, [0.1, 0.25, 0.1, 0.25, 0.15, 0.15]],
+    ["Healthcare analytics pod", "Analysts", 1200000, [0.15, 0.1, 0.1, 0.3, 0.25, 0.1]],
+    ["Consumer analytics pod", "Analysts", 900000, [0.05, 0.45, 0.3, 0.05, 0.05, 0.1]],
+    ["Research operations pod", "Research associates", 530000, [0.1, 0.25, 0.05, 0.25, 0.1, 0.25]],
+  ] as const;
+
+  return assignments.map(([name, role, monthlyCost, weights], index) => ({
+    id: `person-simple-${index + 1}`,
+    name,
+    role,
+    department: "Delivery",
+    monthlyCost,
+    assignments: simpleDemoCenters.map((center, weightIndex) => ({
+      profitCenterId: center.id,
+      fte: weights[weightIndex],
+    })),
+  }));
+}
+
+function applySimpleDemoLedgerQc(rows: TrialBalanceRow[]): TrialBalanceRow[] {
+  return rows.map((row) => {
+    const name = row.accountName.toLowerCase();
+    const group = row.accountGroup.toLowerCase();
+    let category = row.category;
+    let misGroup = row.misGroup;
+
+    if (group.includes("capital account")) {
+      category = "equity";
+      misGroup = "Equity";
+    } else if (["duties", "provisions", "sundry creditors", "current liabilities"].some((term) => group.includes(term))) {
+      category = "current-liability";
+      misGroup = "Current Liabilities";
+    } else if (group.includes("fixed assets")) {
+      category = "fixed-asset";
+      misGroup = "Fixed Assets";
+    } else if (["current assets", "sundry debtors", "bank accounts"].some((term) => group.includes(term))) {
+      category = "current-asset";
+      misGroup = "Current Assets";
+    } else if (name.includes("interest on fd")) {
+      category = "other-income";
+      misGroup = "Other Income";
+    } else if (name.includes("professional") && name.includes("export")) {
+      category = "revenue";
+      misGroup = "Operating Revenue";
+    } else if (["salary", "bonus", "epf", "edli", "staff welfare", "comp. related"].some((term) => name.includes(term))) {
+      category = "people-cost";
+      misGroup = "People Costs";
+    } else if (name.includes("consultancy fees")) {
+      category = "direct-cost";
+      misGroup = "Direct Costs";
+    } else if (name.includes("bank charges") || name.includes("currency rate fluctuation")) {
+      category = "finance-cost";
+      misGroup = "Finance Costs";
+    } else if (name.includes("interest paid on gst") || name.includes("interest paid on tds")) {
+      category = "tax";
+      misGroup = "Taxes";
+    } else if (group.includes("indirect expenses")) {
+      category = "operating-expense";
+      misGroup = "Operating Expenses";
+    }
+
+    return {
+      ...row,
+      category,
+      misGroup,
+      confidence: 1,
+      profitCenterId: "",
+    };
+  });
+}
+
 export function App() {
   const [profile, setProfile] = useState<BusinessProfile>(initialProfile);
   const [rows, setRows] = useState<TrialBalanceRow[]>([]);
   const [profitCenters, setProfitCenters] = useState<ProfitCenter[]>([createDefaultProfitCenter(initialProfile.businessType)]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [answers, setAnswers] = useState<QuestionAnswer[]>([]);
+  const [bankTransactions, setBankTransactions] = useState<BankTransaction[]>([]);
+  const [sourceWarnings, setSourceWarnings] = useState<string[]>([]);
+  const [bankWarnings, setBankWarnings] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("source");
   const [isParsing, setIsParsing] = useState(false);
   const [importError, setImportError] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const bankStatementInputRef = useRef<HTMLInputElement | null>(null);
+  const bankLedgerInputRef = useRef<HTMLInputElement | null>(null);
 
   const template = useMemo(() => getBusinessTemplate(profile.businessType), [profile.businessType]);
-  const questions = useMemo(() => buildQuestions(profile, rows, profitCenters, staff, answers), [profile, rows, profitCenters, staff, answers]);
-  const issues = useMemo(() => buildWorkbookIssues(profile, rows, profitCenters, staff, questions), [profile, rows, profitCenters, staff, questions]);
+  const questions = useMemo(() => buildQuestions(profile, rows, profitCenters, staff, answers, bankTransactions), [profile, rows, profitCenters, staff, answers, bankTransactions]);
+  const issues = useMemo(() => buildWorkbookIssues(profile, rows, profitCenters, staff, questions, bankTransactions), [profile, rows, profitCenters, staff, questions, bankTransactions]);
   const totalDebit = rows.reduce((sum, row) => sum + row.debit, 0);
   const totalCredit = rows.reduce((sum, row) => sum + row.credit, 0);
   const revenue = rows.filter((row) => row.category === "revenue").reduce((sum, row) => sum + Math.abs(row.credit - row.debit), 0);
   const expenses = rows
     .filter((row) => ["direct-cost", "people-cost", "operating-expense", "finance-cost", "tax"].includes(row.category))
     .reduce((sum, row) => sum + Math.abs(row.debit - row.credit), 0);
+  const bankStatementTransactions = bankTransactions.filter((txn) => txn.sourceType === "bank-statement");
+  const bankLedgerTransactions = bankTransactions.filter((txn) => txn.sourceType === "bank-ledger");
+  const inferredBankAccounts = rows.filter((row) => row.category === "current-asset" && /bank|cash|fd|fixed deposit/i.test(`${row.accountName} ${row.accountGroup}`));
+
+  function loadSimpleDemoData() {
+    const demoCenters = createSimpleDemoProfitCenters();
+    setProfile({
+      businessName: "The Simple",
+      legalEntity: "Simple Insights Private Limited",
+      businessType: "professional-services",
+      cadence: "annual",
+      periodStart: "2025-04-01",
+      periodEnd: "2026-03-31",
+      currency: "INR",
+      website: "https://thesimpleintel.com/",
+      geography: "India / export services",
+      publicNotes:
+        "Advanced analytics, research, investment intelligence, financial modelling, dashboards, and AI-enabled decision-support services. Demo allocation uses debtor balances as a proxy for engagement revenue split until invoice-wise data is available.",
+      sourceUrls: "https://thesimpleintel.com/\nhttps://thesimpleintel.com/about-us",
+      allocationBase: "revenue",
+      fundFlowBasis: "trial-balance",
+    });
+    setProfitCenters(demoCenters);
+    setStaff(createSimpleDemoStaff());
+    setAnswers([
+      {
+        id: "assign-pnl-ledgers",
+        question: "Assign P&L ledger accounts to profit centers or shared overhead.",
+        answer: "Demo preset keeps trial-balance P&L ledgers shared and uses manual engagement revenue/direct-cost allocations based on client debtor balances to avoid double-counting ledger revenue.",
+        status: "answered",
+      },
+      {
+        id: "ps-engagement-register",
+        question: "List engagements by client, service line, partner, fee arrangement, billing milestone, and status.",
+        answer: "Six demo engagements loaded: ALNYLAM US, JNTL Consumer Health, Kenvue, Replimune, Vifor International, and XOMA, with client/service line, owner, fee arrangement, revenue, direct cost, hours, and notes.",
+        status: "answered",
+      },
+      {
+        id: "ps-leverage",
+        question: "Capture partner, manager, associate, and support hours for each engagement.",
+        answer: "Demo staffing matrix loaded with senior delivery lead, healthcare analytics pod, consumer analytics pod, and research operations pod. Assignment weights represent FTE/time split across engagements.",
+        status: "answered",
+      },
+      {
+        id: "ps-wip-ar",
+        question: "Capture WIP, billed receivables, retainer advances, write-offs, and collection ageing by client.",
+        answer: "Client debtor balances in the trial balance are used as a demo receivables proxy. Final MIS should replace this with invoice-wise ageing and WIP data.",
+        status: "answered",
+      },
+    ]);
+    setRows((current) => applySimpleDemoLedgerQc(current));
+    setActiveTab("allocation");
+  }
 
   async function handleFile(file: File) {
     setIsParsing(true);
     setImportError("");
     try {
-      const parsedRows = await parseTrialBalanceFile(file);
+      const parsed = parseTrialBalanceWorkbook(await file.arrayBuffer(), file.name);
+      const parsedRows = parsed.rows;
       if (!parsedRows.length) {
         setImportError("No ledger rows were detected. Use a CSV/XLSX file with account, debit, credit, or balance columns.");
       }
-      setRows(parsedRows);
+      setSourceWarnings(parsed.warnings);
+      setProfile((current) => ({
+        ...current,
+        businessName: parsed.metadata.businessName || current.businessName,
+        legalEntity: parsed.metadata.businessName || current.legalEntity,
+        cadence: parsed.metadata.periodStart && parsed.metadata.periodEnd ? "annual" : current.cadence,
+        periodStart: parsed.metadata.periodStart || current.periodStart,
+        periodEnd: parsed.metadata.periodEnd || current.periodEnd,
+      }));
+      setRows(profile.businessName === "The Simple" ? applySimpleDemoLedgerQc(parsedRows) : parsedRows);
       setActiveTab("mapping");
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Could not parse the selected file.");
@@ -149,11 +392,45 @@ export function App() {
     }
   }
 
+  function inferredFundFlowBasis(transactions: BankTransaction[]): BusinessProfile["fundFlowBasis"] {
+    const hasStatement = transactions.some((txn) => txn.sourceType === "bank-statement");
+    const hasLedger = transactions.some((txn) => txn.sourceType === "bank-ledger");
+    if (hasStatement && hasLedger) return "bank-statement-and-ledger";
+    if (hasStatement) return "bank-statement";
+    if (hasLedger) return "bank-ledger";
+    return profile.fundFlowBasis;
+  }
+
+  async function handleBankFile(file: File, sourceType: BankSourceType) {
+    setIsParsing(true);
+    setImportError("");
+    try {
+      const parsed = parseBankStatementWorkbook(await file.arrayBuffer(), sourceType, file.name);
+      setBankTransactions((current) => {
+        const withoutSameFile = current.filter((txn) => !(txn.sourceType === sourceType && txn.sourceFileName === file.name));
+        const next = [...withoutSameFile, ...parsed.transactions];
+        setProfile((profileCurrent) => ({ ...profileCurrent, fundFlowBasis: next.length ? inferredFundFlowBasis(next) : profileCurrent.fundFlowBasis }));
+        return next;
+      });
+      setBankWarnings((current) => [...current.filter((warning) => !warning.includes(file.name)), ...parsed.warnings.map((warning) => `${file.name}: ${warning}`)]);
+      setActiveTab("bank");
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Could not parse the selected bank source.");
+    } finally {
+      setIsParsing(false);
+    }
+  }
+
+  function handleBankFiles(fileList: FileList | null, sourceType: BankSourceType) {
+    Array.from(fileList || []).forEach((file) => {
+      void handleBankFile(file, sourceType);
+    });
+  }
+
   function handleBusinessTypeChange(type: BusinessType) {
     setProfile((current) => ({
       ...current,
       businessType: type,
-      businessName: current.businessName === "Sample University" || current.businessName === "Sample Business" ? "Sample Business" : current.businessName,
     }));
     setProfitCenters((current) => {
       if (!current.length || (current.length === 1 && isUnconfiguredCenter(current[0]) && !rows.some((row) => row.profitCenterId))) {
@@ -216,7 +493,17 @@ export function App() {
   }
 
   function exportWorkbook() {
-    const output = generateMisWorkbook({ profile, rows, centers: profitCenters, staff, questions, answers });
+    if (!rows.length) {
+      const confirmed = window.confirm(
+        "No trial balance is loaded. This will export a demo-only MIS production pack with missing-ledger warnings, blank raw ledger schedules, and zero working-capital schedules. Continue?",
+      );
+      if (!confirmed) {
+        setActiveTab("source");
+        return;
+      }
+    }
+
+    const output = generateMisWorkbook({ profile, rows, centers: profitCenters, staff, questions, answers, bankTransactions });
     XLSX.writeFile(output.workbook, output.filename, { compression: true });
   }
 
@@ -235,6 +522,7 @@ export function App() {
 
         <nav className="step-nav" aria-label="MIS sections">
           <TabButton icon={<Upload size={18} />} label="Source" value="source" active={activeTab} onClick={setActiveTab} />
+          <TabButton icon={<Landmark size={18} />} label="Bank & Fund Flow" value="bank" active={activeTab} onClick={setActiveTab} />
           <TabButton icon={<Building2 size={18} />} label="Profile" value="profile" active={activeTab} onClick={setActiveTab} />
           <TabButton icon={<Layers3 size={18} />} label="Mapping" value="mapping" active={activeTab} onClick={setActiveTab} />
           <TabButton icon={<Users size={18} />} label="Allocation" value="allocation" active={activeTab} onClick={setActiveTab} />
@@ -260,10 +548,16 @@ export function App() {
             <p className="eyebrow">{profile.cadence} report</p>
             <h2>{profile.businessName || "Untitled MIS report"}</h2>
           </div>
-          <button className="primary-action" type="button" onClick={exportWorkbook}>
-            <Download size={18} />
-            Export Excel
-          </button>
+          <div className="topbar-actions">
+            <button className="secondary-action" type="button" onClick={loadSimpleDemoData}>
+              <Sparkles size={18} />
+              Load The Simple demo
+            </button>
+            <button className="primary-action" type="button" onClick={exportWorkbook}>
+              <Download size={18} />
+              Export Excel
+            </button>
+          </div>
         </header>
 
         <section className="metric-grid" aria-label="MIS summary">
@@ -272,6 +566,7 @@ export function App() {
           <Metric label="Credit" value={currency(totalCredit, profile.currency)} />
           <Metric label="Revenue" value={currency(revenue, profile.currency)} />
           <Metric label="P&L cost" value={currency(expenses, profile.currency)} />
+          <Metric label="Bank rows" value={bankTransactions.length.toString()} />
         </section>
 
         {activeTab === "source" && (
@@ -290,7 +585,32 @@ export function App() {
               <strong>{isParsing ? "Reading file..." : "Upload trial balance or ledger export"}</strong>
               <span>Tally, Zoho Books, Busy, QuickBooks, CSV, XLS, or XLSX with account and amount columns.</span>
             </div>
+            <div className="demo-callout">
+              <div>
+                <span className="eyebrow">Demo shortcut</span>
+                <strong>The Simple engagement MIS</strong>
+                <p>Pre-fill the business profile, six client engagements, allocation notes, and staffing matrix. Upload the trial balance before or after this step.</p>
+              </div>
+              <button className="secondary-action" type="button" onClick={loadSimpleDemoData}>
+                <Sparkles size={16} />
+                Load demo data
+              </button>
+            </div>
+            <div className="demo-callout">
+              <div>
+                <span className="eyebrow">Fund flow source</span>
+                <strong>{bankTransactions.length ? `${bankTransactions.length} bank transactions loaded` : "Bank & Fund Flow has its own upload step"}</strong>
+                <p>Use the dedicated bank section for separate Bank Statement and Bank Ledger uploads. The TB period and account categories are reused automatically.</p>
+              </div>
+              <button className="secondary-action" type="button" onClick={() => setActiveTab("bank")}>
+                <Landmark size={16} />
+                Open bank section
+              </button>
+            </div>
             {importError && <div className="alert danger">{importError}</div>}
+            {[...sourceWarnings, ...bankWarnings].map((warning) => (
+              <div className="alert warning" key={warning}>{warning}</div>
+            ))}
             <div className="split">
               <div className="quiet-box">
                 <span className="eyebrow">Detected structure</span>
@@ -302,7 +622,116 @@ export function App() {
                 <strong>{rows.filter((row) => row.category !== "unknown").length} mapped</strong>
                 <p>{rows.filter((row) => row.category === "unknown").length} rows need review.</p>
               </div>
+              <div className="quiet-box">
+                <span className="eyebrow">Inferred profile</span>
+                <strong>{profile.businessName || "Not inferred yet"}</strong>
+                <p>{profile.periodStart && profile.periodEnd ? `${profile.periodStart} to ${profile.periodEnd}` : "Upload a TB with period headers."}</p>
+              </div>
             </div>
+          </Panel>
+        )}
+
+        {activeTab === "bank" && (
+          <Panel title="Bank & Fund Flow" icon={<Landmark size={20} />}>
+            <div className="bank-upload-grid">
+              <article className="bank-upload-card">
+                <div>
+                  <span className="eyebrow">Bank statement</span>
+                  <strong>{bankStatementTransactions.length ? `${bankStatementTransactions.length} statement transactions` : "Upload bank statements"}</strong>
+                  <p>Use statements as the cash-movement truth for actual receipts, payments, closing balances, and reconciliation.</p>
+                </div>
+                <input
+                  ref={bankStatementInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    handleBankFiles(event.target.files, "bank-statement");
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <button className="secondary-action" type="button" onClick={() => bankStatementInputRef.current?.click()}>
+                  <Upload size={16} />
+                  Upload statements
+                </button>
+              </article>
+
+              <article className="bank-upload-card">
+                <div>
+                  <span className="eyebrow">Bank ledger</span>
+                  <strong>{bankLedgerTransactions.length ? `${bankLedgerTransactions.length} ledger transactions` : "Upload bank ledgers"}</strong>
+                  <p>Use ledgers for book-side classification, timing support, and reconciliation against bank statement movement.</p>
+                </div>
+                <input
+                  ref={bankLedgerInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    handleBankFiles(event.target.files, "bank-ledger");
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <button className="secondary-action" type="button" onClick={() => bankLedgerInputRef.current?.click()}>
+                  <Upload size={16} />
+                  Upload ledgers
+                </button>
+              </article>
+            </div>
+
+            <div className="split">
+              <div className="quiet-box">
+                <span className="eyebrow">Inferred from TB</span>
+                <strong>{inferredBankAccounts.length ? `${inferredBankAccounts.length} bank/cash/FD accounts` : "No bank accounts inferred yet"}</strong>
+                <p>{inferredBankAccounts.slice(0, 4).map((row) => row.accountName).join(", ") || "Upload the TB first so the app can match bank sources to book balances."}</p>
+              </div>
+              <div className="quiet-box">
+                <span className="eyebrow">Fund flow basis</span>
+                <strong>{profile.fundFlowBasis.replace(/-/g, " ")}</strong>
+                <p>{bankStatementTransactions.length ? "Actual fund flow will use statements first, with ledgers as support." : bankLedgerTransactions.length ? "Ledger-only fund flow is provisional until statements are uploaded." : "Upload bank sources to complete fund flow."}</p>
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Source</th>
+                    <th>Narration</th>
+                    <th>Payment</th>
+                    <th>Receipt</th>
+                    <th>Fund-flow group</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bankTransactions.slice(0, 120).map((txn) => (
+                    <tr key={txn.id}>
+                      <td>{txn.date}</td>
+                      <td>
+                        <strong>{txn.sourceType === "bank-statement" ? "Statement" : "Ledger"}</strong>
+                        <span>{txn.sourceFileName || txn.sourceSheet}</span>
+                      </td>
+                      <td>{txn.narration}</td>
+                      <td>{currency(txn.debit, profile.currency)}</td>
+                      <td>{currency(txn.credit, profile.currency)}</td>
+                      <td>
+                        <strong>{txn.fundFlowGroup}</strong>
+                        <span>{txn.isInterAccountTransfer ? "Internal transfer excluded" : txn.category}</span>
+                      </td>
+                    </tr>
+                  ))}
+                  {!bankTransactions.length && (
+                    <tr>
+                      <td colSpan={6}>Upload statements and ledgers to build the AKEV-style fund flow and next-period projection.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {bankTransactions.length > 120 && <p className="table-note">Showing first 120 bank rows. All imported rows are included in the workbook.</p>}
           </Panel>
         )}
 
@@ -333,6 +762,16 @@ export function App() {
               <Field label="Period end" type="date" value={profile.periodEnd} onChange={(value) => setProfile({ ...profile, periodEnd: value })} />
               <Field label="Currency" value={profile.currency} onChange={(value) => setProfile({ ...profile, currency: value.toUpperCase() })} />
               <Field label="Geography" value={profile.geography} onChange={(value) => setProfile({ ...profile, geography: value })} />
+              <label>
+                Fund flow basis
+                <select value={profile.fundFlowBasis} onChange={(event) => setProfile({ ...profile, fundFlowBasis: event.target.value as BusinessProfile["fundFlowBasis"] })}>
+                  <option value="bank-statement-and-ledger">Bank statement + ledger</option>
+                  <option value="bank-statement">Bank statement</option>
+                  <option value="bank-ledger">Bank ledger</option>
+                  <option value="trial-balance">Trial balance proxy</option>
+                  <option value="manual">Manual assumptions</option>
+                </select>
+              </label>
             </div>
             <div className="form-grid single">
               <Field label="Website / public profile" value={profile.website} onChange={(value) => setProfile({ ...profile, website: value })} icon={<Globe2 size={16} />} />
@@ -376,6 +815,7 @@ export function App() {
                     <th>Debit</th>
                     <th>Credit</th>
                     <th>Category</th>
+                    <th>MIS group</th>
                     <th>Profit center</th>
                   </tr>
                 </thead>
@@ -404,6 +844,7 @@ export function App() {
                           ))}
                         </select>
                       </td>
+                      <td>{row.misGroup}</td>
                       <td>
                         <select
                           value={row.profitCenterId}
@@ -651,7 +1092,7 @@ export function App() {
             <div className="export-grid">
               <div className="export-card">
                 <span className="eyebrow">Sheets generated</span>
-                <strong>{["Methodology", "Raw Trial Balance", "Executive MIS", "Driver Build-Up", "Unit Profitability", "People Allocation", "Shared Cost Allocation", ...template.workbookSheets, "Question Register", "Data Gaps"].join(", ")}</strong>
+                <strong>{["Control Panel", "Balance Sheet", "Tax & Statutory", "Fund Flow", "Fund Flow Projection", "Bank Reconciliation", "ChartData", "Executive MIS", "Unit Profitability", ...template.workbookSheets, "Question Register", "QC Tie-Outs"].join(", ")}</strong>
                 <button className="primary-action" type="button" onClick={exportWorkbook}>
                   <Download size={18} />
                   Generate MIS workbook
