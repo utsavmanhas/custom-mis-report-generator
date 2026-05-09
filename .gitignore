@@ -15,5 +15,3 @@ pnpm-debug.log*
 *.xlsx
 *.xls
 *.csv
-
-.vercel
