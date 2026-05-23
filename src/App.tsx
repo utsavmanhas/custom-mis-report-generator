@@ -181,7 +181,7 @@ export function App() {
   const [chartWarning, setChartWarning] = useState<string | null>(null);
   const [shortcutLoading, setShortcutLoading] = useState(false);
   const [shortcutError, setShortcutError] = useState("");
-  const [shortcutStatus, setShortcutStatus] = useState("");
+  const [buildComplete, setBuildComplete] = useState(false);
 
   // ── File handlers ──────────────────────────────────────────────────────────
 
@@ -369,7 +369,7 @@ export function App() {
     try {
       const result = await renderClaudeWorkbook({ businessName: profile.businessName, currency: profile.currency, analyzeResult: analysis, builtSheets, rows, bankSources });
       const safe = (profile.businessName || "mis").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-      downloadBlob(result.blob, `${safe}-mis-claude.xlsx`);
+      downloadBlob(result.blob, `${safe}-mis-report.xlsx`);
       if (result.chartWarning) setChartWarning(result.chartWarning);
     } catch (e) {
       setBuildError(e instanceof Error ? `Download failed — ${e.message}` : "Download failed.");
@@ -378,28 +378,27 @@ export function App() {
     }
   }
 
-  // ── Shortcut path ──────────────────────────────────────────────────────────
+  // ── Build path ─────────────────────────────────────────────────────────────
 
-  async function buildWithShortcut() {
+  async function buildReport() {
     if (!analysis) return;
+    setBuildStarted(true);
+    setBuildComplete(false);
     setShortcutLoading(true);
     setShortcutError("");
-    setShortcutStatus("Starting…");
     try {
       const allocationChoice = analysis.allocationLogicOptions.find((o) => o.recommended) ?? analysis.allocationLogicOptions[0] ?? null;
       const answers = clientInstructions.trim()
         ? [{ id: "client-instructions", question: "Client instructions", answer: clientInstructions }]
         : [];
-      setShortcutStatus("Building with Shortcut…");
       const blob = await buildWorkbookWithShortcut({ profile, rows, bankSources, segments: analysis.detectedSegments, allocationChoice, answers, sheetPlan: analysis.sheetPlan });
       const safe = (profile.businessName || "mis").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-      downloadBlob(blob, `${safe}-mis-shortcut.xlsx`);
-      setShortcutStatus("Done.");
+      downloadBlob(blob, `${safe}-mis-report.xlsx`);
+      setBuildComplete(true);
     } catch (e) {
-      setShortcutError(e instanceof Error ? e.message : "Shortcut build failed.");
+      setShortcutError(e instanceof Error ? e.message : "Build failed.");
     } finally {
       setShortcutLoading(false);
-      setShortcutStatus("");
     }
   }
 
@@ -467,7 +466,7 @@ export function App() {
           <textarea
             className="client-brief-box"
             rows={2}
-            placeholder="Tell Claude what your client cares about: industry, how they review numbers, key KPIs, number scale. e.g. 'Series B SaaS, board tracks ARR and burn, numbers in lakhs, monthly columns preferred.'"
+            placeholder="Tell us what your client cares about: industry, how they review numbers, key KPIs, number scale. e.g. 'Series B SaaS, board tracks ARR and burn, numbers in lakhs, monthly columns preferred.'"
             value={clientBrief}
             onChange={(e) => setClientBrief(e.target.value)}
           />
@@ -488,7 +487,7 @@ export function App() {
               disabled={analyzeLoading || !rows.length}
             >
               <Sparkles size={16} />
-              {analyzeLoading ? "Analysing…" : analysis ? "Re-analyse" : "Analyse with Claude"}
+              {analyzeLoading ? "Analysing…" : analysis ? "Re-analyse" : "Analyse"}
             </button>
             {analyzeError && <p className="error-line"><AlertTriangle size={14} /> {analyzeError}</p>}
           </div>
@@ -519,7 +518,7 @@ export function App() {
 
               {analysis.clarifyingQuestions.length > 0 && (
                 <div className="claude-qs">
-                  <p className="claude-qs-label">Answer Claude's questions:</p>
+                  <p className="claude-qs-label">Clarifying questions:</p>
                   <div className="claude-qa-list">
                     {analysis.clarifyingQuestions.map((q) => (
                       <div key={q.id} className="claude-qa-row">
@@ -587,7 +586,7 @@ export function App() {
                   {revisionHistory.map((r, i) => (
                     <div key={i} className="revision-entry">
                       <p className="revision-prompt">You: {r.prompt}</p>
-                      <p className="revision-ack">Claude: {r.ack}</p>
+                      <p className="revision-ack">Auren: {r.ack}</p>
                     </div>
                   ))}
                 </div>
@@ -597,7 +596,7 @@ export function App() {
                 <textarea
                   className="prompt-box"
                   rows={3}
-                  placeholder="Type changes or answer Claude's questions… e.g. 'Show amounts in lakhs. Remove the hostel sheet. Faculty headcount is 120.'"
+                  placeholder="Type changes or clarifications… e.g. 'Show amounts in lakhs. Remove the hostel sheet. Faculty headcount is 120.'"
                   value={revisePrompt}
                   onChange={(e) => setRevisePrompt(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) revisePlan(); }}
@@ -606,12 +605,9 @@ export function App() {
                   <button className="btn-secondary" type="button" onClick={revisePlan} disabled={reviseLoading || !revisePrompt.trim()}>
                     {reviseLoading ? "Revising…" : "Revise Plan"}
                   </button>
-                  <button className="btn-primary" type="button" onClick={buildWorkbookFlow} disabled={buildLoading || shortcutLoading}>
+                  <button className="btn-primary" type="button" onClick={buildReport} disabled={shortcutLoading}>
                     <Sparkles size={15} />
-                    {buildLoading ? `Building ${buildProgress.done}/${buildProgress.total}…` : "Build with Claude"}
-                  </button>
-                  <button className="btn-secondary" type="button" onClick={buildWithShortcut} disabled={shortcutLoading || buildLoading}>
-                    {shortcutLoading ? shortcutStatus || "Shortcut building…" : "Build with Shortcut"}
+                    {shortcutLoading ? "Building report…" : "Build Report"}
                   </button>
                 </div>
               </div>
@@ -622,14 +618,17 @@ export function App() {
         {/* ── STEP 3: Build ── */}
         <StepCard n={3} title="Build & download" locked={!buildStarted}>
           {!buildStarted ? (
-            <p className="step-placeholder">Click "Build with Claude" above to start.</p>
+            <p className="step-placeholder">Click "Build Report" above to start.</p>
           ) : (
             <>
-              {buildLoading && (
+              {shortcutLoading && (
                 <div className="build-progress">
-                  <div className="progress-bar"><div className="progress-fill" style={{ width: `${pct}%` }} /></div>
-                  <p className="progress-label">{buildProgress.done === 0 ? "Starting…" : `${buildProgress.done} of ${buildProgress.total} sheets ready`}</p>
+                  <div className="progress-bar"><div className="progress-fill" style={{ width: "100%" }} /></div>
+                  <p className="progress-label">Building your report…</p>
                 </div>
+              )}
+              {buildComplete && !shortcutLoading && (
+                <p className="progress-label">Report ready — download started automatically.</p>
               )}
 
               {builtSheets.length > 0 && (
@@ -676,24 +675,7 @@ export function App() {
                 </div>
               )}
 
-              {buildError && <p className="error-line"><AlertTriangle size={14} /> {buildError}</p>}
               {shortcutError && <p className="error-line"><AlertTriangle size={14} /> {shortcutError}</p>}
-
-              {builtSheets.length > 0 && !buildLoading && (
-                <div className="download-area">
-                  <button className="btn-download" type="button" onClick={downloadClaudeWorkbook} disabled={downloadLoading}>
-                    <Download size={16} />
-                    {downloadLoading ? "Preparing…" : "Download MIS Report (.xlsx)"}
-                  </button>
-                  {chartWarning && <p className="chart-warn"><AlertTriangle size={13} /> {chartWarning}</p>}
-                </div>
-              )}
-
-              {tokenTotals.input > 0 && (
-                <p className="token-usage">
-                  Tokens used: {(tokenTotals.input / 1000).toFixed(1)}K in · {(tokenTotals.output / 1000).toFixed(1)}K out
-                </p>
-              )}
             </>
           )}
         </StepCard>

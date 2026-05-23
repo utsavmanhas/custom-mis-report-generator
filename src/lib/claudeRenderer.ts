@@ -364,7 +364,7 @@ export interface RenderResult {
 
 export async function renderClaudeWorkbook(opts: RenderOpts): Promise<RenderResult> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Claude-powered MIS Generator";
+  wb.creator = "Auren Finance Pack Generator";
   wb.created = new Date();
   const usedNames = new Set<string>();
 
@@ -396,7 +396,7 @@ export async function renderClaudeWorkbook(opts: RenderOpts): Promise<RenderResu
     notes.addRow([s.name, `${s.kind} - ${s.rationale}`]);
   }
   notes.addRow([]);
-  notes.addRow(["Per-sheet notes from Claude", ""]);
+  notes.addRow(["Per-sheet notes", ""]);
   for (const built of opts.builtSheets) {
     for (const n of built.notes ?? []) {
       notes.addRow([built.sheet.name, n]);
