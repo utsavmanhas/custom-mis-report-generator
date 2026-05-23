@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap");
+import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap");
 
 :root {
   --paper:        #FAFAF9;
@@ -239,11 +239,11 @@ button:disabled {
 
 .upload-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .upload-grid { grid-template-columns: 1fr; }
 }
 
@@ -262,6 +262,7 @@ button:disabled {
 }
 
 .upload-zone:hover { border-color: var(--emerald); background: var(--emerald-soft); }
+.upload-zone:focus-visible { outline: 2px solid var(--emerald); outline-offset: 2px; }
 
 .upload-icon { color: var(--stone-light); }
 .upload-zone:hover .upload-icon { color: var(--emerald); }
@@ -272,7 +273,10 @@ button:disabled {
   font-size: 0.8rem;
   font-weight: 500;
   color: var(--ink);
-  word-break: break-all;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .upload-hint {
@@ -288,12 +292,32 @@ button:disabled {
 
 .upload-warn {
   font-size: 0.7rem;
-  color: var(--alert);
+  color: var(--amber);
   display: flex;
   align-items: center;
   gap: 3px;
   text-align: center;
 }
+
+.client-brief-box {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--rule-strong);
+  background: var(--paper);
+  font-size: 0.85rem;
+  font-family: var(--font-body);
+  color: var(--ink);
+  resize: vertical;
+  min-height: 60px;
+  transition: border-color 0.15s;
+}
+
+.client-brief-box:focus {
+  outline: none;
+  border-color: var(--emerald);
+}
+
+.client-brief-box::placeholder { color: var(--stone-light); }
 
 .tb-meta {
   font-size: 0.82rem;
@@ -1075,35 +1099,6 @@ button:disabled {
   font-family: var(--font-display);
   font-size: 20px;
   font-weight: 400;
-}
-
-/* ── Upload zone ─────────────────────────────────────────── */
-
-.upload-zone {
-  display: grid;
-  place-items: center;
-  gap: 10px;
-  min-height: 224px;
-  padding: 30px;
-  border: 1px dashed var(--rule-strong);
-  background: var(--paper-alt);
-  color: var(--ink);
-  text-align: center;
-  transition: border-color 150ms ease, background 150ms ease;
-}
-
-.upload-zone:hover {
-  border-color: var(--emerald);
-  background: var(--emerald-soft);
-}
-
-.upload-zone input {
-  display: none;
-}
-
-.upload-zone.compact {
-  min-height: 172px;
-  padding: 22px;
 }
 
 .upload-zone span,
