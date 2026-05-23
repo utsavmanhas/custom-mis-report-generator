@@ -360,35 +360,77 @@ export async function parseTrialBalanceFile(file: File): Promise<TrialBalanceRow
 function locateBankColumns(aoa: unknown[][]) {
   const top = aoa.slice(0, HEADER_SCAN_DEPTH);
   const ncols = top.reduce((max, row) => Math.max(max, row.length), 0);
+
+  // Find the actual header row: the row whose cells have the most financial keyword matches.
+  // Using row-level density prevents narration text in data rows from polluting column detection.
+  const headerKeywordRe = /^(date|txn date|transaction date|value date|voucher date|vch date|narration|description|particulars|remarks|debit|dr|credit|cr|amount|balance|closing balance|withdrawal|withdrawals|deposit|deposits|receipt|receipts|payment|payments|details|ledger|account|vch|vch type|vch no)$/;
+  let lastHeaderRow = -1;
+  let bestScore = 0;
+  for (let row = 0; row < top.length; row += 1) {
+    let score = 0;
+    for (let col = 0; col < ncols; col += 1) {
+      const v = normalizeHeader(top[row][col]);
+      if (v && headerKeywordRe.test(v)) score += 1;
+    }
+    if (score > bestScore) { bestScore = score; lastHeaderRow = row; }
+    // A row with the same score but appearing later is also a valid header (e.g. multi-row headers)
+    else if (score > 0 && score === bestScore && row > lastHeaderRow) lastHeaderRow = row;
+  }
+
+  // Fall back to scanning for any single keyword match if no density winner found
+  if (lastHeaderRow < 0) {
+    for (let row = 0; row < top.length; row += 1) {
+      for (let col = 0; col < ncols; col += 1) {
+        const v = normalizeHeader(top[row][col]);
+        if (v && /\b(date|narration|description|particulars|debit|credit|amount|balance|withdrawal|deposit|receipt|payment)\b/.test(v)) {
+          lastHeaderRow = row;
+          break;
+        }
+      }
+      if (lastHeaderRow >= 0) break;
+    }
+  }
+
+  if (lastHeaderRow < 0) return null;
+
+  // Detect column positions using ONLY the header row — never data cells.
+  const headerRow = top[lastHeaderRow] ?? [];
   let dateIdx = -1;
   let descriptionIdx = -1;
   let debitIdx = -1;
   let creditIdx = -1;
   let amountIdx = -1;
   let balanceIdx = -1;
-  let lastHeaderRow = -1;
 
-  for (let column = 0; column < ncols; column += 1) {
-    const colText = top.map((row) => normalizeHeader(row[column])).filter(Boolean).join(" | ");
-    if (!colText) continue;
-    if (dateIdx < 0 && /\b(date|txn date|transaction date|value date|voucher date|vch)\b/.test(colText)) dateIdx = column;
-    if (descriptionIdx < 0 && /\b(narration|description|particulars|remarks|ledger|account|details)\b/.test(colText)) descriptionIdx = column;
-    if (debitIdx < 0 && /\b(debit|withdrawal|payment|paid|dr)\b/.test(colText)) debitIdx = column;
-    if (creditIdx < 0 && /\b(credit|deposit|receipt|received|cr)\b/.test(colText)) creditIdx = column;
-    if (amountIdx < 0 && /\bamount\b/.test(colText)) amountIdx = column;
-    if (balanceIdx < 0 && /\bbalance\b|\bclosing\b/.test(colText)) balanceIdx = column;
-
-    for (let row = 0; row < top.length; row += 1) {
-      const value = normalizeHeader(top[row][column]);
-      if (value && /\b(date|narration|description|particulars|debit|credit|amount|balance|withdrawal|deposit|receipt|payment)\b/.test(value)) {
-        lastHeaderRow = Math.max(lastHeaderRow, row);
-      }
-    }
+  for (let column = 0; column < headerRow.length; column += 1) {
+    const value = normalizeHeader(headerRow[column]);
+    if (!value) continue;
+    if (dateIdx < 0 && /\b(date|txn date|transaction date|value date|voucher date|vch)\b/.test(value)) dateIdx = column;
+    if (descriptionIdx < 0 && /\b(narration|description|particulars|remarks|ledger|account|details)\b/.test(value)) descriptionIdx = column;
+    if (debitIdx < 0 && /\b(debit|withdrawals?|payment|paid|dr)\b/.test(value)) debitIdx = column;
+    if (creditIdx < 0 && /\b(credit|deposits?|receipts?|received|cr)\b/.test(value)) creditIdx = column;
+    if (amountIdx < 0 && /\bamount\b/.test(value)) amountIdx = column;
+    if (balanceIdx < 0 && /\bbalance\b|\bclosing\b/.test(value)) balanceIdx = column;
   }
 
   if (dateIdx < 0 && descriptionIdx < 0) return null;
   if (debitIdx < 0 && creditIdx < 0 && amountIdx < 0) return null;
-  return { dateIdx, descriptionIdx, debitIdx, creditIdx, amountIdx, balanceIdx, lastHeaderRow: Math.max(lastHeaderRow, 0) };
+
+  // Detect Tally-style multi-column narration: empty-header cols between
+  // descriptionIdx and the first structural/amount column (Vch Type, Debit, etc.)
+  let descriptionEndIdx = descriptionIdx;
+  if (descriptionIdx >= 0) {
+    const firstAmountCol = [debitIdx, creditIdx, amountIdx]
+      .filter((i) => i > descriptionIdx)
+      .reduce((min, i) => Math.min(min, i), headerRow.length);
+    for (let col = descriptionIdx + 1; col < firstAmountCol; col++) {
+      const h = normalizeHeader(headerRow[col]);
+      if (h && /\b(vch|voucher|type|no|number|ref|reference|cheque|chq|mode|bank)\b/.test(h)) break;
+      if (!h) descriptionEndIdx = col;
+    }
+  }
+
+  return { dateIdx, descriptionIdx, descriptionEndIdx, debitIdx, creditIdx, amountIdx, balanceIdx, lastHeaderRow };
 }
 
 function parseDate(value: unknown) {
@@ -486,7 +528,15 @@ export async function parseBankSourceFile(file: File, sourceType: BankSourceFile
     aoa.slice(located.lastHeaderRow + 1).forEach((row, offset) => {
       const sourceRowNumber = located.lastHeaderRow + offset + 2;
       const date = located.dateIdx >= 0 ? parseDate(row[located.dateIdx]) : "";
-      const description = located.descriptionIdx >= 0 ? String(row[located.descriptionIdx] ?? "").trim() : "";
+
+      // Concatenate multi-column narration (Tally spreads description across several cols)
+      const descParts: string[] = [];
+      for (let col = located.descriptionIdx; col <= located.descriptionEndIdx; col++) {
+        const v = String(row[col] ?? "").trim();
+        if (v) descParts.push(v);
+      }
+      const description = descParts.join(" ");
+
       let debit = located.debitIdx >= 0 ? Math.abs(parseNumber(row[located.debitIdx])) : 0;
       let credit = located.creditIdx >= 0 ? Math.abs(parseNumber(row[located.creditIdx])) : 0;
 
@@ -499,6 +549,7 @@ export async function parseBankSourceFile(file: File, sourceType: BankSourceFile
       const balance = located.balanceIdx >= 0 ? parseNumber(row[located.balanceIdx]) : 0;
       if (!date && !description && !debit && !credit) return;
       if (!debit && !credit) return;
+      if (/\bopening\s*balance\b/i.test(description)) return;
 
       transactions.push({
         id: makeRowId(sheetName, sourceRowNumber, description || "bank-row"),
